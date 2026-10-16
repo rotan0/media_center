@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta charset="utf-8">
+<title>Media Center Setup</title>
+<hta:application id="setup" applicationname="LocalMediaCenterSetup" icon="media_center/assets/img/hundo.ico" singleinstance="yes"
+  border="thin" maximizebutton="no" scroll="no" contextmenu="no">
+<style>
+  html, body { margin: 0; height: 100%; font-family: "Segoe UI", Arial, sans-serif; color: #fff; overflow: hidden; }
+  body { background: #0e1014 url(media_center/assets/img/hundo.jpg) center center no-repeat; background-size: cover; }
+  .shade { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: rgba(6, 8, 12, .18); }
+  .card { position: absolute; left: 40px; right: 40px; top: 34px; bottom: 34px; background: rgba(12, 14, 20, .74);
+          border: 1px solid rgba(255,255,255,.16); border-radius: 16px; padding: 24px 30px; }
+  .top { overflow: hidden; }
+  .top .lang { float: right; font-size: 13px; }
+  [dir=rtl] .top .lang { float: left; }
+  h1 { margin: 0 0 2px; font-size: 26px; }
+  h2 { margin: 18px 0 8px; font-size: 17px; }
+  p, li, label { font-size: 14px; line-height: 1.5; color: #dfe3ec; }
+  .muted { color: #aab1c0; font-size: 12px; }
+  .steps { margin: 6px 0 0; font-size: 12px; color: #8c93a8; }
+  .steps b { color: #fff; }
+  .opt { display: block; margin: 6px 0; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); cursor: pointer; }
+  .opt small { display: block; color: #aab1c0; }
+  input[type=text] { width: 70%; font: inherit; font-size: 13px; padding: 6px 8px; background: #1d2130; color: #fff; border: 1px solid #2a2f40; border-radius: 6px; }
+  select { font: inherit; font-size: 13px; padding: 4px; background: #1d2130; color: #fff; border: 1px solid #2a2f40; border-radius: 6px; }
+  .bar { height: 10px; background: rgba(255,255,255,.12); border-radius: 5px; overflow: hidden; margin: 14px 0 6px; }
+  .bar i { display: block; height: 100%; width: 0; background: #4f8cff; }
+  .nav { position: absolute; left: 30px; right: 30px; bottom: 22px; text-align: right; }
+  [dir=rtl] .nav { text-align: left; }
+  button { font: inherit; font-size: 14px; padding: 8px 18px; margin-left: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+           background: rgba(255,255,255,.08); color: #fff; cursor: pointer; }
+  button.primary { background: #4f8cff; border-color: #4f8cff; font-weight: 600; }
+  button[disabled] { opacity: .45; }
+  #page { position: absolute; left: 30px; right: 30px; top: 96px; bottom: 70px; overflow: auto; }
+  .free { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(63,185,80,.14); border: 1px solid rgba(63,185,80,.35); font-size: 13px; color: #d7f5d0; }
+</style>
+<script src="media_center/assets/hta_common.js"></script>
+<script>
+var SRC = join(htaDir(), 'media_center');
+var VERSION = '__VERSION__';
+var st = { step: 0, target: '', mode: 'local', desktop: true, startmenu: true, launch: true, busy: false, done: false };
+
+window.resizeTo(880, 600);
+window.moveTo((screen.availWidth - 880) / 2, (screen.availHeight - 600) / 2);
+function $(id) { return document.getElementById(id); }
+
+function removableDrives() {
+  var out = [], e = new Enumerator(FSO.Drives);
+  for (; !e.atEnd(); e.moveNext()) {
+    var d = e.item();
+    try { if (d.DriveType === 1 && d.IsReady) out.push({ letter: d.DriveLetter, name: d.VolumeName || '', free: d.FreeSpace }); } catch (x) { }
+  }
+  return out;
+}
+function localTarget() { return join(SH.ExpandEnvironmentStrings('%LOCALAPPDATA%'), 'Media Center'); }
+
+function pageWelcome() {
+  return '<h2>' + esc(T('inst_welcome', 'Welcome')) + '</h2>' +
+    '<p>' + esc(T('inst_intro', 'This installs Local Media Center: a free, portable, offline media center for your movies, music and pictures. It runs in your web browser and keeps everything inside one folder.')) + '</p>' +
+    '<ul><li>' + esc(T('inst_f1', 'Works offline. The internet is only used when you add new media or download tools.')) + '</li>' +
+    '<li>' + esc(T('inst_f2', 'Portable: install it to an SD card or USB stick and use it on any Windows PC.')) + '</li>' +
+    '<li>' + esc(T('inst_f3', 'Everything it needs (PHP, Python, ffmpeg) is downloaded into its own folder automatically.')) + '</li>' +
+    '<li>' + esc(T('inst_f4', 'Available in 20 languages.')) + '</li></ul>' +
+    '<div class="free">' + esc(T('inst_free', 'Public domain and Creative Commons media can be saved and shared freely. The app rates every file so you know what you may share and whom to credit.')) + '</div>';
+}
+function pageWhere() {
+  var h = '<h2>' + esc(T('inst_where', 'Where should Media Center go?')) + '</h2>';
+  h += '<label class="opt"><input type="radio" name="mode" value="local"' + (st.mode === 'local' ? ' checked' : '') + '> ' + esc(T('inst_local', 'This computer')) +
+    '<small>' + esc(localTarget()) + '</small></label>';
+  var drives = removableDrives();
+  for (var i = 0; i < drives.length; i++) {
+    var d = drives[i];
+    h += '<label class="opt"><input type="radio" name="mode" value="drive:' + d.letter + '"' + (st.mode === 'drive:' + d.letter ? ' checked' : '') + '> ' +
+      esc(T('inst_portable', 'Portable — SD card / USB drive {d}:', { d: d.letter })) + ' ' + esc(d.name) +
+      '<small>' + esc(d.letter + ':\\media_center · ' + T('inst_free_space', '{s} free', { s: human(d.free) })) + '</small></label>';
+  }
+  if (!drives.length) h += '<p class="muted">' + esc(T('inst_no_drive', 'No SD card or USB drive found. Insert one and press Back, then Next, to see it here.')) + '</p>';
+  h += '<label class="opt"><input type="radio" name="mode" value="custom"' + (st.mode === 'custom' ? ' checked' : '') + '> ' + esc(T('inst_custom', 'Another folder')) +
+    '<br><input type="text" id="custom" value="' + esc(st.mode === 'custom' ? st.target : '') + '"> <button id="browse">' + esc(T('inst_browse', 'Browse…')) + '</button></label>';
+  h += '<h2>' + esc(T('inst_options', 'Options')) + '</h2>' +
+    '<label><input type="checkbox" id="oDesk"' + (st.desktop ? ' checked' : '') + '> ' + esc(T('inst_desktop', 'Create a desktop icon')) + '</label><br>' +
+    '<label><input type="checkbox" id="oStart"' + (st.startmenu ? ' checked' : '') + '> ' + esc(T('inst_startmenu', 'Add to the Start menu')) + '</label><br>' +
+    '<label><input type="checkbox" id="oLaunch"' + (st.launch ? ' checked' : '') + '> ' + esc(T('inst_launch', 'Start Media Center when finished')) + '</label>';
+  return h;
+}
+function pageInstall() {
+  return '<h2 id="ph">' + esc(T('inst_installing', 'Installing…')) + '</h2>' +
+    '<p id="pt" class="muted"></p><div class="bar"><i id="fill"></i></div><p id="pf" class="muted"></p>';
+}
+function pageDone() {
+  return '<h2>' + esc(T('inst_done', 'All done!')) + '</h2>' +
+    '<p>' + esc(T('inst_done_text', 'Media Center is installed in {p}. Use the desktop icon to start it. On first start it downloads PHP, Python and ffmpeg into its own folder (about 170 MB) — after that it works offline.', { p: st.target })) + '</p>' +
+    '<div class="free">' + esc(T('inst_done_share', 'Tip: open “Free to share” in the app to find media you can copy to friends, with the credits already written.')) + '</div>';
+}
+
+function render() {
+  document.title = T('inst_title', 'Media Center Setup');
+  $('h').innerHTML = esc(T('title', 'Local Media Center')) + ' <span class="muted">' + esc(VERSION) + '</span>';
+  $('langLbl').innerHTML = esc(T('language', 'Language'));
+  var names = [T('inst_s1', 'Welcome'), T('inst_s2', 'Location'), T('inst_s3', 'Install'), T('inst_s4', 'Finish')];
+  var s = '';
+  for (var i = 0; i < names.length; i++) s += (i ? ' › ' : '') + (i === st.step ? '<b>' + esc(names[i]) + '</b>' : esc(names[i]));
+  $('steps').innerHTML = s;
+  $('page').innerHTML = [pageWelcome, pageWhere, pageInstall, pageDone][st.step]();
+  $('bBack').innerHTML = esc(T('inst_back', 'Back'));
+  $('bNext').innerHTML = esc(st.step === 1 ? T('inst_install', 'Install') : st.step === 3 ? T('inst_finish', 'Finish') : T('inst_next', 'Next'));
+  $('bCancel').innerHTML = esc(T('inst_cancel', 'Cancel'));
+  $('bBack').style.display = st.step === 1 ? '' : 'none';
+  $('bCancel').style.display = st.step < 2 ? '' : 'none';
+  $('bNext').disabled = st.busy;
+  if (st.step === 1) {
+    var radios = document.getElementsByName('mode');
+    for (var r = 0; r < radios.length; r++) radios[r].onclick = function () { st.mode = this.value; };
+    $('browse').onclick = function () {
+      var f = new ActiveXObject('Shell.Application').BrowseForFolder(0, T('inst_pick', 'Choose a folder for Media Center'), 0x51, 0);
+      if (f) { $('custom').value = join(f.Self.Path, 'media_center'); st.mode = 'custom'; render(); }
+      return false;
+    };
+  }
+}
+function readWhere() {
+  st.desktop = $('oDesk').checked; st.startmenu = $('oStart').checked; st.launch = $('oLaunch').checked;
+  if (st.mode === 'local') st.target = localTarget();
+  else if (st.mode.indexOf('drive:') === 0) st.target = st.mode.substr(6) + ':\\media_center';
+  else st.target = $('custom').value.replace(/[\\\/]+$/, '');
+  return !!st.target;
+}
+
+/* ---------- copy with progress ---------- */
+function listFiles(dir, rel, out) {
+  var f = FSO.GetFolder(dir), e;
+  for (e = new Enumerator(f.Files); !e.atEnd(); e.moveNext()) out.push({ rel: rel + e.item().Name, size: e.item().Size });
+  for (e = new Enumerator(f.SubFolders); !e.atEnd(); e.moveNext()) { out.push({ rel: rel + e.item().Name, dir: true }); listFiles(e.item().Path, rel + e.item().Name + '\\', out); }
+  return out;
+}
+var KEEP = /^data\\(media|directories|config|job|net|usage|manifest|server|autosetup)\.json$/i;
+
+function install() {
+  st.busy = true; render();
+  var files = listFiles(SRC, '', []), total = 0, done = 0, i = 0;
+  for (var k = 0; k < files.length; k++) total += files[k].size || 0;
+  var upgrade = FSO.FileExists(join(st.target, 'data', 'media.json'));
+  try { mkdirs(st.target); } catch (e) { return fail(T('inst_err_folder', 'Cannot create the folder {p}', { p: st.target })); }
+  $('pt').innerHTML = esc(upgrade ? T('inst_upgrade', 'Updating the existing installation — your library and settings are kept.') : st.target);
+  function chunk() {
+    var t0 = new Date().getTime();
+    while (i < files.length && new Date().getTime() - t0 < 60) {
+      var f = files[i++], to = join(st.target, f.rel);
+      try {
+        if (f.dir) { if (!FSO.FolderExists(to)) FSO.CreateFolder(to); }
+        else if (!(upgrade && KEEP.test(f.rel) && FSO.FileExists(to))) FSO.CopyFile(join(SRC, f.rel), to, true);
+      } catch (e) { return fail(T('inst_err_copy', 'Could not copy {f}', { f: f.rel }) + ' — ' + e.message); }
+      done += f.size || 0;
+    }
+    $('fill').style.width = Math.round(done * 100 / Math.max(1, total)) + '%';
+    $('pf').innerHTML = esc(human(done) + ' / ' + human(total));
+    if (i < files.length) setTimeout(chunk, 1); else finish();
+  }
+  chunk();
+}
+function finish() {
+  var hta = join(st.target, 'Media Center.hta');
+  var mshta = SYS32 + '\\mshta.exe';
+  var icon = join(st.target, 'assets', 'img', 'hundo.ico');
+  var name = T('title', 'Local Media Center');
+  try {
+    var c = readJson(join(st.target, 'data', 'config.json'), {});
+    c.language = MC.code; c.portable = st.mode !== 'local'; c.installed = new Date().toISOString(); c.version = VERSION;
+    writeUtf8(join(st.target, 'data', 'config.json'), JSON.stringify(c, null, 2));
+    if (st.desktop) shortcut(join(SH.SpecialFolders('Desktop'), name + '.lnk'), mshta, q(hta), st.target, icon, T('l_sub', 'Portable, offline media center.'));
+    if (st.startmenu) {
+      var prog = SH.SpecialFolders('Programs');
+      shortcut(join(prog, name + '.lnk'), mshta, q(hta), st.target, icon, name);
+      if (st.mode === 'local') shortcut(join(prog, T('un_title', 'Uninstall Media Center') + '.lnk'), mshta, q(join(st.target, 'uninstall.hta')), st.target, icon, '');
+    }
+    if (st.mode === 'local') {
+      var key = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LocalMediaCenter\\';
+      SH.RegWrite(key + 'DisplayName', name, 'REG_SZ');
+      SH.RegWrite(key + 'DisplayIcon', icon, 'REG_SZ');
+      SH.RegWrite(key + 'DisplayVersion', VERSION, 'REG_SZ');
+      SH.RegWrite(key + 'Publisher', 'equal-page', 'REG_SZ');
+      SH.RegWrite(key + 'InstallLocation', st.target, 'REG_SZ');
+      SH.RegWrite(key + 'UninstallString', q(mshta) + ' ' + q(join(st.target, 'uninstall.hta')), 'REG_SZ');
+      SH.RegWrite(key + 'NoModify', 1, 'REG_DWORD');
+      SH.RegWrite(key + 'NoRepair', 1, 'REG_DWORD');
+    }
+  } catch (e) { return fail(T('inst_err_shortcut', 'Files were copied, but a shortcut could not be created:') + ' ' + e.message); }
+  st.busy = false; st.step = 3; render();
+}
+function fail(msg) { st.busy = false; $('ph').innerHTML = esc(T('inst_failed', 'Installation failed')); $('pt').innerHTML = esc(msg); $('bNext').disabled = true; }
+
+function next() {
+  if (st.busy) return;
+  if (st.step === 0) { st.step = 1; render(); }
+  else if (st.step === 1) { if (!readWhere()) return; st.step = 2; render(); setTimeout(install, 50); }
+  else if (st.step === 3) {
+    if (st.launch) SH.Run(q(SYS32 + '\\mshta.exe') + ' ' + q(join(st.target, 'Media Center.hta')));
+    window.close();
+  }
+}
+window.onload = function () {
+  loadLangs(join(SRC, 'data', 'lang'));
+  setLang(systemLang());
+  langOptions($('lang'));
+  $('lang').onchange = function () { if (st.step === 1) readWhere(); setLang(this.value); render(); };
+  $('bNext').onclick = next;
+  $('bBack').onclick = function () { readWhere(); st.step = 0; render(); };
+  $('bCancel').onclick = function () { if (confirm(T('inst_confirm_cancel', 'Cancel the installation?'))) window.close(); };
+  render();
+};
+</script>
+</head>
+<body>
+<div class="shade"></div>
+<div class="card">
+  <div class="top"><span class="lang"><label id="langLbl" for="lang">Language</label> <select id="lang"></select></span>
+    <h1 id="h">Local Media Center</h1><div class="steps" id="steps"></div></div>
+  <div id="page"></div>
+  <div class="nav"><button id="bBack">Back</button><button id="bCancel">Cancel</button><button class="primary" id="bNext">Next</button></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta charset="utf-8">
+<title>Uninstall</title>
+<hta:application id="un" applicationname="LocalMediaCenterUninstall" icon="assets/img/hundo.ico" singleinstance="yes" border="thin" maximizebutton="no" scroll="no">
+<style>
+  html, body { margin: 0; height: 100%; font-family: "Segoe UI", Arial, sans-serif; color: #fff; overflow: hidden; }
+  body { background: #0e1014 url(assets/img/hundo.jpg) center center no-repeat; background-size: cover; }
+  .card { position: absolute; left: 24px; right: 24px; top: 22px; bottom: 22px; background: rgba(12,14,20,.86); border-radius: 14px; padding: 20px 24px; border: 1px solid rgba(255,255,255,.16); }
+  h1 { margin: 0 0 10px; font-size: 20px; }
+  p, label { font-size: 14px; color: #dfe3ec; }
+  .btns { position: absolute; left: 24px; right: 24px; bottom: 18px; }
+  button { font: inherit; font-size: 14px; padding: 8px 16px; margin-right: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: #fff; }
+  button.danger { background: #c9372c; border-color: #c9372c; font-weight: 600; }
+</style>
+<script src="assets/hta_common.js"></script>
+<script>
+var ROOT = htaDir();
+window.resizeTo(560, 380);
+window.moveTo((screen.availWidth - 560) / 2, (screen.availHeight - 380) / 2);
+function $(id) { return document.getElementById(id); }
+function render() {
+  $('h').innerHTML = esc(T('un_title', 'Uninstall Media Center'));
+  $('p').innerHTML = esc(T('un_text', 'This removes Media Center from {p}, its shortcuts and its entry in Windows Settings.', { p: ROOT }));
+  $('kl').innerHTML = esc(T('un_keep', 'Keep my library (media in the library folder, settings and saved covers)'));
+  $('bGo').innerHTML = esc(T('un_go', 'Uninstall'));
+  $('bNo').innerHTML = esc(T('inst_cancel', 'Cancel'));
+}
+function go() {
+  var keep = $('keep').checked, name = T('title', 'Local Media Center');
+  var s = readJson(join(ROOT, 'data', 'server.json'), null);
+  if (s && s.pid) killTree(s.pid);
+  var lnks = [join(SH.SpecialFolders('Desktop'), name + '.lnk'), join(SH.SpecialFolders('Programs'), name + '.lnk'),
+              join(SH.SpecialFolders('Programs'), T('un_title', 'Uninstall Media Center') + '.lnk')];
+  for (var i = 0; i < lnks.length; i++) try { if (FSO.FileExists(lnks[i])) FSO.DeleteFile(lnks[i], true); } catch (e) { }
+  try { SH.RegDelete('HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\LocalMediaCenter\\'); } catch (e) { }
+  var cmd;
+  if (keep) {
+    // remove everything except the library, data, covers and share folders
+    var e = new Enumerator(FSO.GetFolder(ROOT).SubFolders), dirs = [];
+    for (; !e.atEnd(); e.moveNext()) if (!/^(library|data|covers|backdrops|thumbnails|trailers|share)$/i.test(e.item().Name)) dirs.push(e.item().Path);
+    cmd = 'cmd.exe /c "ping 127.0.0.1 -n 3 >nul';
+    for (i = 0; i < dirs.length; i++) cmd += ' & rmdir /s /q "' + dirs[i] + '"';
+    cmd += ' & del /q "' + ROOT + '\\*.*""';
+  } else {
+    cmd = 'cmd.exe /c "ping 127.0.0.1 -n 3 >nul & rmdir /s /q "' + ROOT + '""';
+  }
+  SH.Run(cmd, 0, false);
+  alert(T('un_done', 'Media Center has been removed.'));
+  window.close();
+}
+window.onload = function () {
+  loadLangs(join(ROOT, 'data', 'lang'));
+  setLang(readJson(join(ROOT, 'data', 'config.json'), {}).language || systemLang());
+  render();
+  $('bGo').onclick = go;
+  $('bNo').onclick = function () { window.close(); };
+};
+</script>
+</head>
+<body>
+<div class="card">
+  <h1 id="h"></h1>
+  <p id="p"></p>
+  <label><input type="checkbox" id="keep" checked> <span id="kl"></span></label>
+  <div class="btns"><button class="danger" id="bGo"></button><button id="bNo"></button></div>
+</div>
+</body>
+</html>

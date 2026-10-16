@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="x-ua-compatible" content="ie=edge">
+<meta charset="utf-8">
+<title>Media Center</title>
+<hta:application id="app" applicationname="LocalMediaCenter" icon="assets/img/hundo.ico" singleinstance="yes"
+  border="thin" maximizebutton="no" scroll="no" contextmenu="no" selection="no">
+<style>
+  html, body { margin: 0; height: 100%; font-family: "Segoe UI", Arial, sans-serif; color: #fff; overflow: hidden; }
+  body { background: #0e1014 url(assets/img/hundo.jpg) center center no-repeat; background-size: cover; }
+  .shade { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background: rgba(8, 10, 14, .2); }
+  .card { position: absolute; left: 24px; right: 24px; top: 22px; bottom: 22px; background: rgba(14, 16, 20, .72);
+          border: 1px solid rgba(255,255,255,.15); border-radius: 14px; padding: 20px 24px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .muted { color: #b9bfcc; font-size: 13px; }
+  #status { margin: 16px 0 8px; font-size: 15px; min-height: 22px; }
+  .bar { height: 8px; background: rgba(255,255,255,.12); border-radius: 4px; overflow: hidden; margin: 6px 0 4px; }
+  .bar i { display: block; height: 100%; width: 0; background: #4f8cff; }
+  #url { font-family: Consolas, monospace; color: #9ec1ff; }
+  .btns { position: absolute; left: 24px; right: 24px; bottom: 18px; }
+  button { font: inherit; font-size: 14px; padding: 8px 14px; margin: 0 6px 6px 0; border-radius: 8px; border: 1px solid rgba(255,255,255,.25);
+           background: rgba(255,255,255,.08); color: #fff; cursor: pointer; }
+  button.primary { background: #4f8cff; border-color: #4f8cff; font-weight: 600; }
+  button[disabled] { opacity: .45; cursor: default; }
+  select { font: inherit; font-size: 13px; padding: 4px; background: #1d2130; color: #fff; border: 1px solid #2a2f40; border-radius: 6px; }
+  .top { overflow: hidden; }
+  .top .lang { float: right; }
+  [dir=rtl] .top .lang { float: left; }
+  .share { margin-top: 10px; font-size: 12px; color: #cfe6c8; }
+</style>
+<script src="assets/hta_common.js"></script>
+<script>
+var ROOT = htaDir();
+var TOOLS = join(ROOT, 'tools');
+var PHPDIR = join(TOOLS, 'php');
+var CONFIG = join(ROOT, 'data', 'config.json');
+var state = { pid: 0, port: 0, php: '', started: false };
+
+window.resizeTo(560, 420);
+window.moveTo((screen.availWidth - 560) / 2, (screen.availHeight - 420) / 2);
+
+function $(id) { return document.getElementById(id); }
+function say(text, pct) {
+  $('status').innerHTML = esc(text);
+  $('bar').style.display = pct == null ? 'none' : 'block';
+  if (pct != null) $('fill').style.width = Math.max(2, Math.min(100, pct)) + '%';
+}
+function cfg() { return readJson(CONFIG, {}); }
+function saveCfg(c) { try { writeUtf8(CONFIG, JSON.stringify(c, null, 2)); } catch (e) { } }
+
+function render() {
+  document.title = T('title', 'Local Media Center');
+  $('h').innerHTML = esc(T('title', 'Local Media Center'));
+  $('sub').innerHTML = esc(T('l_sub', 'Portable, offline media center. Runs from this folder, a USB stick or an SD card.'));
+  $('bOpen').innerHTML = esc(T('l_open', 'Open Media Center'));
+  $('bMaint').innerHTML = esc(T('l_maint', 'Repair & tools'));
+  $('bStop').innerHTML = esc(T('l_stop', 'Stop & close'));
+  $('share').innerHTML = esc(T('l_share', 'Public domain and Creative Commons media can be saved and shared freely — see “Free to share”.'));
+  $('langLbl').innerHTML = esc(T('language', 'Language'));
+}
+
+/* ---------- PHP ---------- */
+function findPhp() {
+  var local = join(PHPDIR, 'php.exe');
+  if (FSO.FileExists(local)) return local;
+  var tmp = join(TOOLS, '_where.txt');
+  mkdirs(TOOLS);
+  runWait('cmd.exe /c where php.exe > "' + tmp + '" 2>nul');
+  try {
+    if (FSO.FileExists(tmp)) {
+      var line = (FSO.OpenTextFile(tmp, 1).ReadAll() || '').split(/\r?\n/)[0];
+      FSO.DeleteFile(tmp, true);
+      if (line && FSO.FileExists(line)) return line;
+    }
+  } catch (e) { }
+  if (FSO.FileExists('C:\\xampp\\php\\php.exe')) return 'C:\\xampp\\php\\php.exe';
+  return '';
+}
+function phpArgs(php) {
+  if (php.toLowerCase().indexOf(PHPDIR.toLowerCase()) !== 0) return '';
+  var a = ' -d extension_dir="' + join(PHPDIR, 'ext') + '"';
+  if (FSO.FileExists(join(PHPDIR, 'php.ini'))) a = ' -c "' + join(PHPDIR, 'php.ini') + '"' + a;
+  return a;
+}
+function phpWorks(php) { return runWait('cmd.exe /c ""' + php + '"' + phpArgs(php) + ' -r "exit(0);" >nul 2>nul"') === 0; }
+
+function getPhp(done) {
+  say(T('l_php_find', 'Looking for the latest PHP for Windows…'), 2);
+  httpGet('https://windows.php.net/downloads/releases/releases.json', function (st, txt) {
+    var urls = [];
+    try {
+      var j = JSON.parse(txt), best = null;
+      for (var v in j) if (!best || parseFloat(v) > parseFloat(best)) best = v;
+      var rel = j[best];
+      var keys = ['nts-vs17-x64', 'nts-vs16-x64'];
+      for (var i = 0; i < keys.length; i++) if (rel[keys[i]] && rel[keys[i]].zip) urls.push('https://windows.php.net/downloads/releases/' + rel[keys[i]].zip.path);
+    } catch (e) { }
+    urls.push('https://windows.php.net/downloads/releases/latest/php-8.4-nts-Win32-vs17-x64-latest.zip');
+    urls.push('https://windows.php.net/downloads/releases/latest/php-8.3-nts-Win32-vs16-x64-latest.zip');
+    tryUrls(urls, 0, done);
+  });
+}
+function tryUrls(urls, i, done) {
+  if (i >= urls.length) { say(T('l_php_fail', 'Could not download PHP. Check the internet connection and press “Repair & tools”, or copy a PHP folder into media_center\\tools\\php.')); $('bMaint').disabled = true; return; }
+  var zip = join(TOOLS, '_php.zip');
+  mkdirs(TOOLS);
+  download(urls[i], zip, function (size, rate) {
+    say(T('l_php_dl', 'Downloading PHP (needed to run the app): {size} · {rate}/s', { size: human(size), rate: human(rate) }), Math.min(95, size / 320000));
+  }, function (ok) {
+    if (!ok) return tryUrls(urls, i + 1, done);
+    say(T('l_extracting', 'Unpacking…'), 97);
+    setTimeout(function () {
+      if (!unzip(zip, PHPDIR)) return tryUrls(urls, i + 1, done);
+      try { FSO.DeleteFile(zip, true); } catch (e) { }
+      writePhpIni();
+      done(join(PHPDIR, 'php.exe'));
+    }, 50);
+  });
+}
+function writePhpIni() {
+  var src = join(PHPDIR, 'php.ini-production'), dst = join(PHPDIR, 'php.ini');
+  if (!FSO.FileExists(src) || FSO.FileExists(dst)) return;
+  var t = FSO.OpenTextFile(src, 1).ReadAll();
+  t = t.replace(/^;\s*extension_dir\s*=\s*"ext"/m, 'extension_dir = "ext"');
+  var exts = ['curl', 'fileinfo', 'gd', 'mbstring', 'openssl', 'zip', 'sockets', 'exif'];
+  for (var i = 0; i < exts.length; i++) t = t.replace(new RegExp('^;\\s*extension\\s*=\\s*' + exts[i] + '\\s*$', 'm'), 'extension=' + exts[i]);
+  t = t.replace(/^memory_limit\s*=.*$/m, 'memory_limit = 512M');
+  var f = FSO.CreateTextFile(dst, true); f.Write(t); f.Close();
+}
+function needVcRuntime() {
+  say(T('l_vc', 'PHP needs the Microsoft Visual C++ runtime. Downloading it — Windows will ask for permission to install.'), 5);
+  var exe = join(TOOLS, 'vc_redist.x64.exe');
+  download('https://aka.ms/vs/17/release/vc_redist.x64.exe', exe, function (size, rate) {
+    say(T('l_vc_dl', 'Downloading Visual C++ runtime: {size} · {rate}/s', { size: human(size), rate: human(rate) }), Math.min(95, size / 260000));
+  }, function (ok) {
+    if (!ok) { say(T('l_php_fail', 'Could not download PHP. Check the internet connection and press “Repair & tools”, or copy a PHP folder into media_center\\tools\\php.')); return; }
+    SH.Run(q(exe) + ' /install /passive /norestart', 1, true);
+    boot();
+  });
+}
+
+/* ---------- server ---------- */
+function startServer(php, port) {
+  state.php = php;
+  state.port = port;
+  var cmd = q(php) + phpArgs(php) + ' -S 127.0.0.1:' + port + ' -t ' + q(ROOT);
+  state.pid = spawnHidden(cmd, ROOT);
+  var tries = 0;
+  say(T('l_starting', 'Starting…'), 60);
+  var timer = setInterval(function () {
+    tries++;
+    httpGet('http://127.0.0.1:' + port + '/api.php?action=languages&t=' + new Date().getTime(), function (st) {
+      if (!timer) return;
+      if (st === 200) {
+        clearInterval(timer); timer = null;
+        state.started = true;
+        say(T('l_running', 'Media Center is running.'));
+        $('url').innerHTML = 'http://127.0.0.1:' + port + '/';
+        $('bOpen').disabled = false; $('bMaint').disabled = false;
+        saveServer();
+        var c = cfg();
+        openBrowser(c.first_run_done ? '' : '#maint');
+        if (!c.first_run_done) { c.first_run_done = true; saveCfg(c); }
+      } else if (tries > 25 || !alive(state.pid)) {
+        clearInterval(timer); timer = null;
+        killTree(state.pid);
+        if (port < 8099) startServer(php, port + 1);
+        else say(T('l_no_port', 'Could not start the web server (ports 8080–8099 are busy).'));
+      }
+    });
+  }, 400);
+}
+function saveServer() { try { writeUtf8(join(ROOT, 'data', 'server.json'), JSON.stringify({ pid: state.pid, port: state.port })); } catch (e) { } }
+function openBrowser(hash) { SH.Run('http://127.0.0.1:' + state.port + '/index.php?lang=' + MC.code + (hash || '')); }
+
+function boot() {
+  var php = findPhp();
+  if (!php) return getPhp(function (p) { if (!phpWorks(p)) return needVcRuntime(); startServer(p, 8080); });
+  if (!phpWorks(php)) return needVcRuntime();
+  // already running from a previous launch?
+  var s = readJson(join(ROOT, 'data', 'server.json'), null);
+  if (s && s.port && alive(s.pid)) {
+    httpGet('http://127.0.0.1:' + s.port + '/api.php?action=languages', function (st) {
+      if (st === 200) { state.pid = s.pid; state.port = s.port; state.started = true; say(T('l_running', 'Media Center is running.')); $('url').innerHTML = 'http://127.0.0.1:' + s.port + '/'; $('bOpen').disabled = false; $('bMaint').disabled = false; openBrowser(''); }
+      else startServer(php, 8080);
+    });
+    return;
+  }
+  startServer(php, 8080);
+}
+function stop() { killTree(state.pid); try { FSO.DeleteFile(join(ROOT, 'data', 'server.json'), true); } catch (e) { } window.close(); }
+
+window.onload = function () {
+  loadLangs(join(ROOT, 'data', 'lang'));
+  var c = cfg();
+  setLang(c.language || systemLang());
+  langOptions($('lang'));
+  render();
+  $('lang').onchange = function () { setLang(this.value); render(); var c2 = cfg(); c2.language = this.value; saveCfg(c2); };
+  $('bOpen').onclick = function () { openBrowser(''); };
+  $('bMaint').onclick = function () { openBrowser('#maint'); };
+  $('bStop').onclick = stop;
+  setTimeout(boot, 100);
+};
+window.onbeforeunload = function () { if (state.started) { killTree(state.pid); try { FSO.DeleteFile(join(ROOT, 'data', 'server.json'), true); } catch (e) { } } };
+</script>
+</head>
+<body>
+<div class="shade"></div>
+<div class="card">
+  <div class="top"><span class="lang"><label id="langLbl" for="lang">Language</label> <select id="lang"></select></span>
+    <h1 id="h">Local Media Center</h1></div>
+  <div class="muted" id="sub"></div>
+  <div id="status"></div>
+  <div class="bar" id="bar" style="display:none"><i id="fill"></i></div>
+  <div id="url"></div>
+  <div class="share" id="share"></div>
+  <div class="btns">
+    <button class="primary" id="bOpen" disabled>Open</button>
+    <button id="bMaint" disabled>Repair</button>
+    <button id="bStop">Stop</button>
+  </div>
+</div>
+</body>
+</html>
